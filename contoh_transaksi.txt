@@ -1,0 +1,12 @@
+Pak Budi menyetor modal Rp10.000.000 tunai
+Beli perlengkapan Rp500.000 tunai
+Beli barang dagang Rp3.000.000 secara kredit dari CV Maju
+Jual barang tunai Rp2.500.000, harga pokoknya Rp1.500.000
+Bayar gaji karyawan Rp800.000
+Pak Budi mengambil uang usaha Rp100.000 untuk keperluan pribadi
+
+--- Contoh untuk menguji fitur "agent bertanya balik" (jalankan terpisah) ---
+Bayar listrik Rp300.000
+
+--- Contoh transaksi campuran (jurnal lebih dari 2 baris) ---
+Beli peralatan Rp5.000.000, dibayar tunai Rp2.000.000 sisanya utang
