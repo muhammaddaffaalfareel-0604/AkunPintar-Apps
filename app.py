@@ -1,5 +1,5 @@
 """
-JurnalAI - Asisten Jurnal Otomatis dari Kalimat Biasa
+SmartAccount - Asisten Jurnal Otomatis dari Kalimat Biasa
 =====================================================
 Alur:
     Kalimat transaksi -> AI menyusun draf jurnal -> Python memvalidasi (debit = kredit)
@@ -25,7 +25,7 @@ import akuntansi as ak
 # ---------------------------------------------------------------------------
 # PENGATURAN HALAMAN
 # ---------------------------------------------------------------------------
-st.set_page_config(page_title="JurnalAI", page_icon="📒", layout="wide")
+st.set_page_config(page_title="SmartAccount", page_icon="📒", layout="wide")
 
 # Model LLM di Groq. Untuk ganti model, copy "Model ID" dari
 # https://console.groq.com/docs/models lalu tempel di sini.
@@ -239,7 +239,7 @@ def proses_teks(teks, tanggal_default):
 # ---------------------------------------------------------------------------
 # TAMPILAN UTAMA
 # ---------------------------------------------------------------------------
-st.title("📒 JurnalAI – Asisten Jurnal Otomatis dari Kalimat Biasa")
+st.title("📒 SmartAccount – Asisten Jurnal Otomatis dari Kalimat Biasa")
 st.write(
     "Ketik transaksi dengan bahasa sehari-hari. **AI** menyusun jurnal, sedangkan **Python** "
     "memvalidasi dan menghitung buku besar, neraca saldo, dan laporan keuangan."
@@ -506,7 +506,7 @@ with tab_ekspor:
         st.download_button(
             "📥 Unduh Excel",
             data=ak.ke_excel(jurnal),
-            file_name="jurnalai_hasil.xlsx",
+            file_name="SmartAccount_hasil.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         )
         st.caption("Data hanya tersimpan selama aplikasi dibuka. Unduh dulu sebelum menutup halaman.")
