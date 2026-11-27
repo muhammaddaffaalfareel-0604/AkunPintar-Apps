@@ -450,3 +450,29 @@ def ke_excel(jurnal):
                     if isinstance(c.value, (int, float)):
                         c.number_format = "#,##0"
     return buffer.getvalue()
+
+
+# ---------------------------------------------------------------------------
+# 9. FILTER JURNAL (BARU - dipakai halaman Jurnal Umum)
+# ---------------------------------------------------------------------------
+def filter_jurnal(jurnal, awal=None, akhir=None, akun=None, kata=""):
+    """
+    Menyaring transaksi berdasarkan rentang tanggal, akun, dan kata kunci keterangan.
+    Transaksi diambil UTUH (bukan per baris) agar debit = kredit tetap terjaga.
+    awal/akhir boleh berupa date atau string 'YYYY-MM-DD'.
+    """
+    kata = (kata or "").strip().lower()
+    akun = set(akun or [])
+    hasil = []
+    for t in jurnal:
+        tgl = str(t.get("tanggal") or "")
+        if awal and tgl < str(awal):
+            continue
+        if akhir and tgl > str(akhir):
+            continue
+        if akun and not akun & {b["akun"] for b in t["baris"]}:
+            continue
+        if kata and kata not in t["keterangan"].lower():
+            continue
+        hasil.append(t)
+    return hasil
