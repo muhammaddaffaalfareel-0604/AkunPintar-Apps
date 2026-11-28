@@ -5,7 +5,12 @@ backgroundColor = "#f6fbf8"
 secondaryBackgroundColor = "#ecfdf5"
 textColor = "#0f2a1d"
 borderColor = "#bfe8d2"
+# Font utama (Plus Jakarta Sans) dimuat lewat Google Fonts di CSS app.py.
+# Nilai di bawah hanya cadangan untuk komponen yang tidak ikut CSS (mis. isi tabel interaktif).
 font = "sans serif"
 
 [client]
 toolbarMode = "minimal"
+
+[browser]
+gatherUsageStats = false
