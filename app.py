@@ -1,5 +1,5 @@
 """
-Akun Pintar - Asisten Jurnal Otomatis dari Kalimat Biasa
+SmartAccount - Asisten Jurnal Otomatis
 =========================================================
 Alur:
     Masuk/Daftar -> Input transaksi -> AI menyusun draf jurnal -> Python memvalidasi
@@ -32,7 +32,9 @@ import akuntansi as ak
 # ---------------------------------------------------------------------------
 # PENGATURAN HALAMAN
 # ---------------------------------------------------------------------------
-st.set_page_config(page_title="Akun Pintar", page_icon="🌿", layout="wide")
+st.set_page_config(
+    page_title="SmartAccount", page_icon="🌿", layout="wide", initial_sidebar_state="collapsed"
+)
 
 MODEL = "openai/gpt-oss-20b"
 
@@ -49,6 +51,7 @@ MENU = [
 M_DASHBOARD, M_INPUT, M_JURNAL, M_BB, M_NS, M_LAP, M_AKUN, M_CADANGAN = MENU
 
 HIJAU = ["#047857", "#10b981", "#34d399", "#6ee7b7", "#a7f3d0", "#065f46"]
+FONT_GRAFIK = "Plus Jakarta Sans, Inter, sans-serif"
 
 # ---------------------------------------------------------------------------
 # CSS KUSTOM (hijau & putih; hanya menyentuh elemen yang aman)
@@ -57,29 +60,48 @@ CSS = """
 <style>
 @import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap');
 :root{
+  --font:'Plus Jakarta Sans','Inter',system-ui,-apple-system,'Segoe UI',Roboto,sans-serif;
   --hijau:#059669; --hijau-tua:#065f46; --hijau-muda:#ecfdf5;
   --garis:#cdeedd; --teks:#0f2a1d; --abu:#55675d;
 }
-.stApp{font-family:'Plus Jakarta Sans',system-ui,-apple-system,sans-serif;background:#f6fbf8;color:var(--teks);}
-.block-container{padding-top:1.8rem;padding-bottom:3rem;max-width:1240px;}
+
+/* ===== Font: Plus Jakarta Sans di seluruh aplikasi (ikon Material dikecualikan) ===== */
+html, body, .stApp,
+.stApp *:not([data-testid="stIconMaterial"]):not([class*="material" i]){font-family:var(--font) !important;}
+
+.stApp{background:#f6fbf8;color:var(--teks);}
+.block-container{padding-top:3.4rem;padding-bottom:3rem;max-width:1320px;}
+[data-testid="stHeader"]{background:transparent;}
 footer{visibility:hidden;}
-h1,h2,h3,h4{color:var(--hijau-tua);letter-spacing:-0.01em;}
 
-/* Sidebar */
-[data-testid="stSidebar"]{background:#ffffff;border-right:1px solid var(--garis);}
-[data-testid="stSidebar"] .stButton>button{width:100%;justify-content:flex-start;text-align:left;}
-.brand{font-size:1.4rem;font-weight:800;color:var(--hijau-tua);letter-spacing:-0.02em;}
-.brand-sub{color:var(--abu);font-size:.82rem;margin:.1rem 0 1rem;}
-.user-chip{display:flex;gap:.7rem;align-items:center;padding:.7rem .8rem;background:var(--hijau-muda);
-  border:1px solid var(--garis);border-radius:12px;margin-bottom:1rem;}
-.user-chip b{color:var(--hijau-tua);}
-.user-chip span{color:var(--abu);font-size:.8rem;}
-.avatar{min-width:38px;height:38px;border-radius:50%;background:var(--hijau);color:#fff;
-  display:flex;align-items:center;justify-content:center;font-weight:700;}
+/* Sidebar disembunyikan: navigasi ada di top bar */
+[data-testid="stSidebar"],[data-testid="stSidebarCollapsedControl"],[data-testid="collapsedControl"]{display:none !important;}
 
-/* Tombol */
+/* ===== Tipografi ===== */
+h1,h2,h3,h4{color:var(--hijau-tua);letter-spacing:-0.015em;line-height:1.25;}
+h1{font-size:2rem;font-weight:800;}
+h2{font-size:1.6rem;font-weight:800;}
+h3{font-size:1.25rem;font-weight:700;}
+h4{font-size:1.05rem;font-weight:700;}
+.stApp p,.stApp li{font-size:.96rem;line-height:1.6;}
+[data-testid="stWidgetLabel"] p{font-size:.86rem;font-weight:600;color:var(--teks);}
+[data-testid="stCaptionContainer"],[data-testid="stCaptionContainer"] p{color:var(--abu);font-size:.82rem;}
+
+/* ===== Kartu metrik: angka nominal rapi & mudah dibaca ===== */
+[data-testid="stMetric"]{background:#fff;border:1px solid var(--garis);border-radius:14px;padding:14px 18px;}
+[data-testid="stMetricLabel"] p{font-size:.82rem;font-weight:600;color:var(--abu);}
+[data-testid="stMetricValue"],[data-testid="stMetricValue"] *{
+  font-size:1.55rem;font-weight:800;color:var(--hijau-tua);letter-spacing:-0.02em;
+  font-variant-numeric:tabular-nums;font-feature-settings:"tnum" 1;}
+[data-testid="stDataFrame"]{border:1px solid var(--garis);border-radius:12px;overflow:hidden;font-variant-numeric:tabular-nums;}
+[data-testid="stExpander"]{background:#fff;border:1px solid var(--garis);border-radius:12px;}
+button[data-baseweb="tab"][aria-selected="true"]{color:var(--hijau-tua);}
+[data-baseweb="tab-highlight"]{background-color:var(--hijau);}
+
+/* ===== Tombol ===== */
 .stButton>button,.stDownloadButton>button,.stFormSubmitButton>button{
   border-radius:10px;font-weight:600;border:1px solid var(--garis);background:#fff;color:var(--hijau-tua);}
+.stButton>button p,.stDownloadButton>button p,.stFormSubmitButton>button p{font-size:.9rem;font-weight:600;}
 .stButton>button[kind="secondary"]:hover{border-color:var(--hijau);background:var(--hijau-muda);}
 .stButton>button[kind="primary"],.stDownloadButton>button[kind="primary"],
 .stFormSubmitButton>button[kind="primaryFormSubmit"]{background:var(--hijau);border:1px solid var(--hijau);color:#fff;}
@@ -88,22 +110,39 @@ h1,h2,h3,h4{color:var(--hijau-tua);letter-spacing:-0.01em;}
 .stButton>button[kind="primary"]:hover,.stDownloadButton>button[kind="primary"]:hover,
 .stFormSubmitButton>button[kind="primaryFormSubmit"]:hover{background:var(--hijau-tua);border-color:var(--hijau-tua);}
 
-/* Kartu metrik, tabel, tab, expander */
-[data-testid="stMetric"]{background:#fff;border:1px solid var(--garis);border-radius:14px;padding:14px 18px;}
-[data-testid="stMetricLabel"]{color:var(--abu);}
-[data-testid="stMetricValue"]{color:var(--hijau-tua);font-weight:700;}
-[data-testid="stDataFrame"]{border:1px solid var(--garis);border-radius:12px;overflow:hidden;}
-[data-testid="stExpander"]{background:#fff;border:1px solid var(--garis);border-radius:12px;}
-button[data-baseweb="tab"][aria-selected="true"]{color:var(--hijau-tua);}
-[data-baseweb="tab-highlight"]{background-color:var(--hijau);}
+/* ===== TOP BAR (navigasi horizontal) ===== */
+.st-key-topbar{background:#fff;border:1px solid var(--garis);border-radius:16px;
+  padding:.85rem 1.1rem .8rem;margin-bottom:1.3rem;gap:.6rem;box-shadow:0 1px 2px rgba(6,95,70,.05);}
+.st-key-topbar [data-testid="stHorizontalBlock"]{flex-wrap:nowrap !important;gap:.5rem;align-items:center;
+  overflow-x:auto;scrollbar-width:thin;}
+.st-key-topbar [data-testid="stColumn"],.st-key-topbar [data-testid="column"]{
+  flex:1 1 auto !important;width:auto !important;min-width:max-content !important;}
+.st-key-topbar .stButton>button{width:100%;white-space:nowrap;padding:.35rem .7rem;min-height:2.3rem;}
+.st-key-topbar .stButton>button p{font-size:.86rem;white-space:nowrap;}
+.st-key-btn_keluar{display:flex;justify-content:flex-end;}
+.st-key-btn_keluar .stButton>button{width:auto;}
+.topbrand{font-size:1.3rem;font-weight:800;color:var(--hijau-tua);letter-spacing:-0.02em;white-space:nowrap;line-height:1.2;}
+.topbrand small{display:block;font-size:.72rem;font-weight:500;color:var(--abu);letter-spacing:0;}
+.topinfo{display:flex;gap:.5rem;justify-content:flex-end;align-items:center;flex-wrap:nowrap;}
+.nav-sep{border-top:1px solid var(--garis);margin:.1rem 0;}
+.user-chip{display:flex;gap:.55rem;align-items:center;padding:.28rem .9rem .28rem .3rem;background:var(--hijau-muda);
+  border:1px solid var(--garis);border-radius:999px;white-space:nowrap;}
+.avatar{min-width:30px;height:30px;border-radius:50%;background:var(--hijau);color:#fff;
+  display:flex;align-items:center;justify-content:center;font-weight:700;font-size:.85rem;}
+.uname{display:flex;flex-direction:column;line-height:1.2;}
+.uname b{color:var(--hijau-tua);font-size:.85rem;font-weight:700;}
+.uname span{color:var(--abu);font-size:.72rem;}
+.chip{padding:.22rem .65rem;border-radius:999px;font-size:.76rem;font-weight:600;white-space:nowrap;
+  background:#fffbeb;border:1px solid #fde68a;color:#92400e;}
+.chip.ok{background:var(--hijau-muda);border-color:var(--garis);color:var(--hijau-tua);}
 
-/* Komponen buatan sendiri */
+/* ===== Komponen buatan sendiri ===== */
 .judul{margin:0 0 1.1rem;}
-.judul h2{margin:0;font-size:1.65rem;font-weight:800;}
-.judul p{margin:.25rem 0 0;color:var(--abu);}
+.judul h2{margin:0;font-size:1.7rem;font-weight:800;}
+.judul p{margin:.3rem 0 0;color:var(--abu);font-size:.95rem;}
 .hero{background:var(--hijau-tua);color:#fff;border-radius:16px;padding:1.5rem 1.8rem;margin-bottom:1.2rem;}
-.hero h1{color:#fff;margin:0;font-size:1.8rem;font-weight:800;}
-.hero p{margin:.4rem 0 0;color:#d1fae5;}
+.hero h1{color:#fff;margin:0;font-size:2rem;font-weight:800;}
+.hero p{margin:.4rem 0 0;color:#d1fae5;font-size:.98rem;}
 .kartu{background:#fff;border:1px solid var(--garis);border-radius:14px;padding:1.1rem 1.3rem;margin-bottom:1rem;}
 .kartu h4{margin:0 0 .25rem;}
 .kartu p{margin:0;color:var(--abu);}
@@ -379,6 +418,7 @@ def init_state():
         "tgl_input": date.today(),
         "hapus_menunggu": None,
         "upload_n": 0,
+        "form_akun_n": 0,
     }
     for k, v in awal.items():
         if k not in st.session_state:
@@ -457,7 +497,7 @@ def halaman_masuk():
     _, tengah, _ = st.columns([1, 1.5, 1])
     with tengah:
         st.markdown(
-            '<div class="hero"><h1>🌿 Akun Pintar</h1>'
+            '<div class="hero"><h1>🌿 SmartAccount</h1>'
             "<p>Ubah kalimat transaksi sehari-hari menjadi jurnal, buku besar, "
             "dan laporan keuangan.</p></div>",
             unsafe_allow_html=True,
@@ -510,47 +550,49 @@ def halaman_masuk():
 
 
 # ---------------------------------------------------------------------------
-# SIDEBAR
+# TOP BAR: navigasi utama + identitas pengguna (menggantikan sidebar)
 # ---------------------------------------------------------------------------
-def sidebar(U):
+def topbar(U):
     u = st.session_state.user
-    with st.sidebar:
-        st.markdown(
-            '<div class="brand">🌿 Akun Pintar</div><div class="brand-sub">Jurnal otomatis dari kalimat biasa</div>',
+    nama = html.escape(u["nama"])
+    sub = "Mode uji coba" if u["tamu"] else "@" + html.escape(u["username"])
+    inisial = html.escape(u["nama"][:1].upper())
+
+    chips = []
+    if st.session_state.draf:
+        chips.append(f'<span class="chip">📝 {len(st.session_state.draf)} draf menunggu</span>')
+    elif st.session_state.pertanyaan:
+        chips.append('<span class="chip">🤔 Agent menunggu jawaban</span>')
+    if U["jurnal"]:
+        if U["versi"] != U["versi_cadangan"]:
+            chips.append('<span class="chip">⚠️ Belum dicadangkan</span>')
+        else:
+            chips.append('<span class="chip ok">✅ Sudah dicadangkan</span>')
+
+    with st.container(key="topbar"):
+        c1, c2, c3 = st.columns([1.3, 3, 0.8])
+        c1.markdown(
+            '<div class="topbrand">🌿 SmartAccount<small>Jurnal otomatis dari kalimat biasa</small></div>',
             unsafe_allow_html=True,
         )
-        nama = html.escape(u["nama"])
-        sub = "Mode uji coba" if u["tamu"] else "@" + html.escape(u["username"])
-        st.markdown(
-            f'<div class="user-chip"><div class="avatar">{html.escape(u["nama"][:1].upper())}</div>'
-            f"<div><b>{nama}</b><br><span>{sub}</span></div></div>",
+        c2.markdown(
+            f'<div class="topinfo">{"".join(chips)}'
+            f'<div class="user-chip"><div class="avatar">{inisial}</div>'
+            f'<div class="uname"><b>{nama}</b><span>{sub}</span></div></div></div>',
             unsafe_allow_html=True,
         )
-        for i, m in enumerate(MENU):
-            st.button(
+        c3.button("🚪 Keluar", on_click=keluar, key="btn_keluar", help="Keluar atau ganti akun")
+
+        st.markdown('<div class="nav-sep"></div>', unsafe_allow_html=True)
+        kolom = st.columns(len(MENU))
+        for i, (kol, m) in enumerate(zip(kolom, MENU)):
+            kol.button(
                 m,
                 key=f"nav_{i}",
                 type="primary" if st.session_state.menu == m else "secondary",
                 on_click=pindah,
                 args=(m,),
             )
-
-        # Status draf & cadangan
-        if st.session_state.draf:
-            st.caption(f"📝 {len(st.session_state.draf)} draf jurnal menunggu persetujuan (menu Input Transaksi).")
-        elif st.session_state.pertanyaan:
-            st.caption("🤔 Agent menunggu jawabanmu (menu Input Transaksi).")
-        if U["jurnal"]:
-            if U["versi"] != U["versi_cadangan"]:
-                st.caption("⚠️ Ada perubahan yang belum dicadangkan.")
-            else:
-                st.caption("✅ Data sudah dicadangkan.")
-
-        st.divider()
-        st.caption(f"Model AI: `{MODEL}`")
-        with st.expander("📚 Daftar akun"):
-            st.dataframe(tabel_coa(_js(U["coa"])), hide_index=True)
-        st.button("🚪 Keluar / ganti akun", on_click=keluar)
 
 
 # ---------------------------------------------------------------------------
@@ -575,7 +617,7 @@ def grafik_laba_rugi(lap):
     )
     fig.update_layout(
         showlegend=False, plot_bgcolor="white", paper_bgcolor="white",
-        margin=dict(l=10, r=10, t=50, b=10), font=dict(color="#0f2a1d"),
+        margin=dict(l=10, r=10, t=50, b=10), font=dict(family=FONT_GRAFIK, color="#0f2a1d"),
     )
     fig.update_xaxes(title=None)
     fig.update_yaxes(gridcolor="#e3f4ea", title=None)
@@ -588,7 +630,7 @@ def grafik_aset(lap):
     if df.empty:
         return None
     fig = px.pie(df, names="Akun", values="Saldo", hole=0.55, title="Komposisi aset", color_discrete_sequence=HIJAU)
-    fig.update_layout(paper_bgcolor="white", margin=dict(l=10, r=10, t=50, b=10), font=dict(color="#0f2a1d"))
+    fig.update_layout(paper_bgcolor="white", margin=dict(l=10, r=10, t=50, b=10), font=dict(family=FONT_GRAFIK, color="#0f2a1d"))
     return fig
 
 
@@ -766,6 +808,7 @@ def halaman_input(U):
     with kanan:
         st.date_input("Tanggal (jika tidak disebut di kalimat)", key="tgl_input")
         st.button("📋 Isi contoh transaksi", on_click=isi_contoh)
+        st.button("➕ Akun belum ada? Tambah", on_click=pindah, args=(M_AKUN,), key="in_akun")
     with kiri:
         teks = st.text_area(
             "Transaksi (satu per baris)",
@@ -1010,7 +1053,7 @@ def halaman_buku_besar(U):
     c1.metric(f"Saldo akhir {akun_pilih}", ak.rp(saldo_akhir))
     c2.metric("Total debit", ak.rp(df_bb["Debit"].sum()))
     c3.metric("Total kredit", ak.rp(df_bb["Kredit"].sum()))
-    st.caption(f"Kategori: {kategori} · Saldo normal: {normal}")
+    st.caption(f"Kategori: {ak.label_kategori(kategori)} · Saldo normal: {normal}")
 
     st.dataframe(
         df_bb.style.format({"Debit": ak.fmt_kosong, "Kredit": ak.fmt_kosong, "Saldo": ak.fmt_angka}),
@@ -1019,7 +1062,7 @@ def halaman_buku_besar(U):
 
     with st.expander("Saldo semua akun"):
         ringkas = pd.DataFrame([
-            {"Kode": kode.get(a, ""), "Akun": a, "Kategori": peta[a][0], "Saldo (Rp)": ak.fmt_angka(s)}
+            {"Kode": kode.get(a, ""), "Akun": a, "Kategori": ak.label_kategori(peta[a][0]), "Saldo (Rp)": ak.fmt_angka(s)}
             for a, s in ak.saldo_semua_akun(jurnal, peta).items()
         ])
         st.dataframe(ringkas, hide_index=True)
@@ -1065,7 +1108,7 @@ def halaman_neraca(U):
     tabel = pd.DataFrame([
         {
             "Akun": r["akun"],
-            "Kategori": r["kategori"],
+            "Kategori": ak.label_kategori(r["kategori"]),
             "Saldo normal": r["normal"].capitalize(),
             "Saldo (Rp)": ak.fmt_angka(r["saldo"]),
             "Status": "⚠️ Perlu perhatian" if r["perhatian"] else "✅ Wajar",
@@ -1142,7 +1185,7 @@ def halaman_akun(U):
         {
             "Kode": a["kode"],
             "Akun": a["nama"],
-            "Kategori": a["kategori"],
+            "Kategori": ak.label_kategori(a["kategori"]),
             "Saldo normal": a["normal"].capitalize(),
             "Status": "🔒 Akun inti" if a["nama"] in ak.AKUN_INTI
             else (f"Dipakai di {pakai[a['nama']]} transaksi" if a["nama"] in pakai else "Belum dipakai"),
@@ -1158,28 +1201,42 @@ def halaman_akun(U):
     tab_tambah, tab_ubah, tab_hapus = st.tabs(["➕ Tambah akun", "✏️ Ubah akun", "🗑️ Hapus akun"])
 
     with tab_tambah:
-        with st.form("form_tambah_akun", clear_on_submit=True):
+        n = st.session_state.form_akun_n
+        with st.container(border=True):
+            kategori = st.selectbox(
+                "Kategori / kelompok akun", ak.URUTAN_KATEGORI,
+                format_func=ak.label_kategori, key=f"add_kat_{n}",
+            )
+            saran = ak.kode_berikutnya(daftar, kategori)
             c1, c2 = st.columns([1, 2])
-            kode = c1.text_input("Kode akun", placeholder="mis. 106")
-            nama = c2.text_input("Nama akun", placeholder="mis. Piutang Karyawan")
-            c3, c4 = st.columns(2)
-            kategori = c3.selectbox("Kategori", ak.URUTAN_KATEGORI)
-            normal = c4.selectbox("Saldo normal", ["debit", "kredit"])
-            kirim = st.form_submit_button("Tambah akun", type="primary")
-        st.caption(
-            "Aset & Beban biasanya bersaldo normal debit; Liabilitas, Ekuitas & Pendapatan biasanya kredit. "
-            "Pilih sisi berlawanan hanya untuk akun pengurang (mis. Akumulasi Penyusutan)."
-        )
-        if kirim:
+            kode = c1.text_input(
+                "Kode akun", placeholder=f"Otomatis: {saran}", key=f"add_kode_{n}",
+                help="Kosongkan untuk memakai kode saran sesuai kategori.",
+            )
+            nama = c2.text_input("Nama akun", placeholder="mis. Piutang Karyawan", key=f"add_nama_{n}")
+            alami = ak.NORMAL_KATEGORI[kategori]
+            normal = st.radio(
+                "Saldo normal", ["debit", "kredit"], index=["debit", "kredit"].index(alami),
+                horizontal=True, key=f"add_normal_{n}_{kategori}",
+            )
+            if normal == alami:
+                st.caption(f"Saldo normal umum untuk {ak.label_kategori(kategori)} adalah {alami}.")
+            else:
+                st.info("Saldo normal berlawanan dengan kebiasaan kategori ini, jadi akun diperlakukan sebagai akun pengurang (mis. Akumulasi Penyusutan).")
+            tambah = st.button("➕ Tambah akun", type="primary", key=f"add_btn_{n}")
+
+        if tambah:
             error = ak.coa_tambah(daftar, kode, nama, kategori, normal)
             if error:
-                st.error("\n\n".join(error))
+                st.error("Akun belum bisa ditambahkan:\n\n" + "\n".join(f"- {e}" for e in error))
             else:
+                baru = daftar[-1]
                 ubah_data(U)
-                catatan = ""
-                if normal != ak.NORMAL_KATEGORI[kategori]:
-                    catatan = " Akun ini diperlakukan sebagai akun pengurang di kategorinya."
-                st.session_state.pesan_sukses = f"✅ Akun '{nama.strip()}' ditambahkan.{catatan}"
+                st.session_state.form_akun_n += 1  # kosongkan form
+                st.session_state.pesan_sukses = (
+                    f"✅ Akun {baru['kode']} · {baru['nama']} berhasil ditambahkan ke {ak.label_kategori(baru['kategori'])} "
+                    f"(saldo normal {baru['normal']}). Akun langsung tersedia untuk AI, jurnal, dan semua laporan."
+                )
                 st.rerun()
 
     with tab_ubah:
@@ -1197,7 +1254,7 @@ def halaman_akun(U):
             c3, c4 = st.columns(2)
             kategori = c3.selectbox(
                 "Kategori", ak.URUTAN_KATEGORI, index=ak.URUTAN_KATEGORI.index(akun["kategori"]),
-                disabled=inti, key=f"ukat_{kf}",
+                format_func=ak.label_kategori, disabled=inti, key=f"ukat_{kf}",
             )
             normal = c4.selectbox(
                 "Saldo normal", ["debit", "kredit"], index=["debit", "kredit"].index(akun["normal"]),
@@ -1376,10 +1433,11 @@ if not st.session_state.user:
     st.stop()
 
 U = data_user()
-sidebar(U)
+topbar(U)
 
 if st.session_state.pesan_sukses:
     st.success(st.session_state.pesan_sukses)
     st.session_state.pesan_sukses = ""
 
 HALAMAN[st.session_state.menu](U)
+st.caption(f"Model AI: `{MODEL}` · SmartAccount")
