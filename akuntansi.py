@@ -78,6 +78,46 @@ def _coa(coa):
     return AKUN if coa is None else coa
 
 
+# Nama kategori di penyimpanan tetap "Liabilitas"/"Ekuitas" (kompatibel dengan snapshot lama),
+# tetapi pengguna boleh menulis/memilih "Kewajiban", "Modal", dll. Label tampilan ada di LABEL_KATEGORI.
+ALIAS_KATEGORI = {
+    "aset": "Aset", "aktiva": "Aset",
+    "liabilitas": "Liabilitas", "kewajiban": "Liabilitas", "utang": "Liabilitas", "hutang": "Liabilitas",
+    "ekuitas": "Ekuitas", "modal": "Ekuitas", "ekuitas / modal": "Ekuitas", "ekuitas/modal": "Ekuitas",
+    "pendapatan": "Pendapatan", "penghasilan": "Pendapatan",
+    "beban": "Beban", "biaya": "Beban",
+}
+
+LABEL_KATEGORI = {
+    "Aset": "Aset",
+    "Liabilitas": "Kewajiban",
+    "Ekuitas": "Ekuitas / Modal",
+    "Pendapatan": "Pendapatan",
+    "Beban": "Beban",
+}
+
+
+def normalisasi_kategori(kategori):
+    """'kewajiban' / 'Modal' / ' ASET ' -> nama kategori baku; selain itu dikembalikan apa adanya."""
+    mentah = " ".join(str(kategori or "").split())
+    return ALIAS_KATEGORI.get(mentah.lower(), mentah)
+
+
+def label_kategori(kategori):
+    """Nama kategori baku -> label tampilan (mis. Liabilitas -> Kewajiban)."""
+    return LABEL_KATEGORI.get(kategori, str(kategori))
+
+
+def _kunci_nama(nama):
+    """Pembanding nama akun: abaikan huruf besar/kecil dan spasi berlebih."""
+    return " ".join(str(nama or "").split()).lower()
+
+
+def _kunci_kode(kode):
+    """Pembanding kode akun: abaikan huruf besar/kecil dan spasi."""
+    return "".join(str(kode or "").split()).lower()
+
+
 # ---------------------------------------------------------------------------
 # 2. KELOLA DAFTAR AKUN (COA)
 # ---------------------------------------------------------------------------
@@ -124,7 +164,8 @@ def daftar_akun_df(daftar=None):
 
 def kode_berikutnya(daftar, kategori):
     """Saran kode akun berikutnya yang belum dipakai untuk suatu kategori."""
-    dipakai = {str(a["kode"]).lower() for a in daftar}
+    dipakai = {_kunci_kode(a["kode"]) for a in daftar}
+    kategori = normalisasi_kategori(kategori)
     prefix = PREFIX_KODE.get(kategori, 9)
     for n in range(1, 1000):
         kode = f"{prefix}{n:02d}"
@@ -136,13 +177,14 @@ def kode_berikutnya(daftar, kategori):
 def periksa_akun(daftar, kode, nama, kategori, normal, abaikan=None):
     """
     Validasi satu akun terhadap daftar yang ada.
+    Duplikat nama/kode dideteksi tanpa membedakan huruf besar/kecil dan spasi berlebih.
     `abaikan` = nama akun yang sedang diedit (tidak dihitung sebagai duplikat).
     Return: (daftar_error, kode_bersih, nama_bersih)
     """
     errors = []
-    kode = str(kode or "").strip()
+    kode = "".join(str(kode or "").split())
     nama = " ".join(str(nama or "").split())
-    kategori = str(kategori or "").strip()
+    kategori = normalisasi_kategori(kategori)
     normal = str(normal or "").strip().lower()
 
     if not re.fullmatch(r"[A-Za-z0-9.\-]{1,10}", kode):
@@ -159,9 +201,9 @@ def periksa_akun(daftar, kode, nama, kategori, normal, abaikan=None):
     for a in daftar:
         if abaikan is not None and a["nama"] == abaikan:
             continue
-        if nama and a["nama"].lower() == nama.lower():
-            errors.append(f"Nama akun '{nama}' sudah ada.")
-        if kode and str(a["kode"]).lower() == kode.lower():
+        if nama and _kunci_nama(a["nama"]) == _kunci_nama(nama):
+            errors.append(f"Nama akun '{nama}' sudah dipakai akun '{a['nama']}'.")
+        if kode and _kunci_kode(a["kode"]) == _kunci_kode(kode):
             errors.append(f"Kode '{kode}' sudah dipakai akun '{a['nama']}'.")
     return errors, kode, nama
 
@@ -184,11 +226,17 @@ def ganti_nama_akun(jurnal, lama, baru):
 
 
 def coa_tambah(daftar, kode, nama, kategori, normal):
-    """Tambah akun ke `daftar` (diubah di tempat). Return list error (kosong = berhasil)."""
+    """
+    Tambah akun ke `daftar` (diubah di tempat). Kode yang dikosongkan diisi otomatis
+    sesuai kategori. Return list error (kosong = berhasil); akun baru ada di daftar[-1].
+    """
+    kategori = normalisasi_kategori(kategori)
+    if not "".join(str(kode or "").split()) and kategori in URUTAN_KATEGORI:
+        kode = kode_berikutnya(daftar, kategori)
     errors, kode, nama = periksa_akun(daftar, kode, nama, kategori, normal)
     if errors:
         return errors
-    daftar.append({"kode": kode, "nama": nama, "kategori": kategori, "normal": str(normal).lower()})
+    daftar.append({"kode": kode, "nama": nama, "kategori": kategori, "normal": str(normal).strip().lower()})
     return []
 
 
@@ -200,12 +248,13 @@ def coa_ubah(daftar, nama_lama, kode, nama, kategori, normal, jurnal):
     idx = next((i for i, a in enumerate(daftar) if a["nama"] == nama_lama), None)
     if idx is None:
         return ["Akun tidak ditemukan."]
+    kategori = normalisasi_kategori(kategori)
     if nama_lama in AKUN_INTI:
         nama, kategori, normal = nama_lama, daftar[idx]["kategori"], daftar[idx]["normal"]
     errors, kode, nama = periksa_akun(daftar, kode, nama, kategori, normal, abaikan=nama_lama)
     if errors:
         return errors
-    daftar[idx] = {"kode": kode, "nama": nama, "kategori": kategori, "normal": str(normal).lower()}
+    daftar[idx] = {"kode": kode, "nama": nama, "kategori": kategori, "normal": str(normal).strip().lower()}
     if nama != nama_lama:
         ganti_nama_akun(jurnal, nama_lama, nama)
     return []
@@ -732,7 +781,7 @@ def coa_bersih(daftar):
             continue
         bersih.append({
             "kode": kode, "nama": nama,
-            "kategori": str(a["kategori"]).strip(), "normal": str(a["normal"]).strip().lower(),
+            "kategori": normalisasi_kategori(a["kategori"]), "normal": str(a["normal"]).strip().lower(),
         })
     for inti in sorted(AKUN_INTI):
         ada = next((a for a in bersih if a["nama"] == inti), None)
@@ -836,7 +885,7 @@ def muat_snapshot_csv(isi, daftar_coa_sekarang):
         if not punya_meta:
             errors.append(f"Akun '{nama}' belum ada di daftar akun.")
             continue
-        kat = str(r["Kategori"]).strip().capitalize()
+        kat = normalisasi_kategori(r["Kategori"])
         kode = str(r["Kode Akun"]).strip() if "Kode Akun" in df.columns else ""
         if not kode or kode.lower() in {str(a["kode"]).lower() for a in daftar}:
             kode = kode_berikutnya(daftar, kat)
