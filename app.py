@@ -4,7 +4,7 @@ Akun Pintar - Asisten Jurnal Otomatis dari Kalimat Biasa
 Alur:
     Masuk/Daftar -> Input transaksi -> AI menyusun draf jurnal -> Python memvalidasi
     (debit = kredit) -> pengguna meninjau -> Jurnal Umum -> Buku Besar -> Neraca Saldo
-    -> Laporan Keuangan -> Ekspor Excel
+    -> Laporan Keuangan -> Ekspor / Cadangan
 
 Pembagian tugas:
     AI     : memahami kalimat, memilih akun, menulis komentar
@@ -19,7 +19,7 @@ import html
 import json
 import os
 import re
-from datetime import date
+from datetime import date, datetime
 
 import pandas as pd
 import plotly.express as px
@@ -43,9 +43,10 @@ MENU = [
     "📚 Buku Besar",
     "⚖️ Neraca Saldo",
     "📑 Laporan Keuangan",
-    "📥 Ekspor Excel",
+    "🗂️ Kelola Akun",
+    "💾 Cadangan & Ekspor",
 ]
-M_DASHBOARD, M_INPUT, M_JURNAL, M_BB, M_NS, M_LAP, M_EKSPOR = MENU
+M_DASHBOARD, M_INPUT, M_JURNAL, M_BB, M_NS, M_LAP, M_AKUN, M_CADANGAN = MENU
 
 HIJAU = ["#047857", "#10b981", "#34d399", "#6ee7b7", "#a7f3d0", "#065f46"]
 
@@ -106,6 +107,11 @@ button[data-baseweb="tab"][aria-selected="true"]{color:var(--hijau-tua);}
 .kartu{background:#fff;border:1px solid var(--garis);border-radius:14px;padding:1.1rem 1.3rem;margin-bottom:1rem;}
 .kartu h4{margin:0 0 .25rem;}
 .kartu p{margin:0;color:var(--abu);}
+.cek{display:flex;gap:.6rem;align-items:flex-start;padding:.6rem .85rem;margin-bottom:.4rem;background:#fff;
+  border:1px solid var(--garis);border-left:4px solid var(--hijau);border-radius:10px;font-size:.93rem;}
+.cek.warn{border-left-color:#d97706;background:#fffbeb;border-color:#fde68a;}
+.cek.bad{border-left-color:#dc2626;background:#fef2f2;border-color:#fecaca;}
+.cek.info{border-left-color:#6b7f74;}
 </style>
 """
 
@@ -117,6 +123,15 @@ def pasang_css():
 def judul(ikon, teks, sub=""):
     st.markdown(
         f'<div class="judul"><h2>{ikon} {html.escape(teks)}</h2><p>{html.escape(sub)}</p></div>',
+        unsafe_allow_html=True,
+    )
+
+
+def kartu_cek(level, teks):
+    """Satu baris hasil pemeriksaan. level: ok | warn | bad | info."""
+    ikon = {"ok": "✅", "warn": "⚠️", "bad": "❌", "info": "ℹ️"}[level]
+    st.markdown(
+        f'<div class="cek {level}"><span>{ikon}</span><span>{html.escape(teks)}</span></div>',
         unsafe_allow_html=True,
     )
 
@@ -140,11 +155,11 @@ def get_client():
 
 
 # ---------------------------------------------------------------------------
-# PROMPT UNTUK AI (tidak berubah)
+# PROMPT UNTUK AI (daftar akun kini mengikuti COA pengguna)
 # ---------------------------------------------------------------------------
 PROMPT_TEMPLATE = """Kamu adalah asisten akuntansi yang mengubah kalimat transaksi menjadi jurnal umum (double-entry).
 
-DAFTAR AKUN (gunakan HANYA nama akun ini, persis sama penulisannya):
+DAFTAR AKUN (format: kode nama akun (kategori, saldo normal)). Tulis HANYA nama akunnya, tanpa kode, persis sama penulisannya:
 {{DAFTAR_AKUN}}
 
 ATURAN:
@@ -156,7 +171,8 @@ ATURAN:
 6. Pembelian secara kredit/utang -> kredit Utang Usaha. Setoran modal pemilik -> kredit Modal Pemilik. Pemilik mengambil uang atau barang untuk keperluan pribadi -> debit Prive.
 7. JANGAN MENEBAK. Jika ada informasi penting yang tidak jelas (nominal tidak pasti, tidak jelas tunai atau kredit, jenis barang ambigu antara peralatan/perlengkapan/beban), jawab dengan status "tanya" berisi SATU pertanyaan singkat dalam bahasa Indonesia.
 8. tanggal: format YYYY-MM-DD jika disebut dalam kalimat, jika tidak isi null.
-9. Jawab HANYA dengan JSON, tanpa teks lain dan tanpa markdown.
+9. JANGAN membuat akun baru. Jika tidak ada akun di daftar yang cocok, jawab dengan status "tanya".
+10. Jawab HANYA dengan JSON, tanpa teks lain dan tanpa markdown.
 
 FORMAT JIKA TRANSAKSI JELAS:
 {"status":"ok","pertanyaan":"","transaksi":[{"tanggal":null,"keterangan":"Beli perlengkapan tunai","baris":[{"akun":"Perlengkapan","posisi":"debit","nominal":500000},{"akun":"Kas","posisi":"kredit","nominal":500000}]}]}
@@ -176,17 +192,28 @@ CONTOH_BAWAAN = (
 
 
 # ---------------------------------------------------------------------------
-# DATA STATIS & HITUNGAN (di-cache agar ringan di Streamlit Community Cloud)
+# DATA STATIS & HITUNGAN (di-cache; kunci cache = JSON jurnal + JSON daftar akun)
 # ---------------------------------------------------------------------------
+def _js(obj):
+    return json.dumps(obj, sort_keys=True, default=str)
+
+
+def _peta(cjs):
+    return ak.coa_ke_peta(json.loads(cjs))
+
+
 @st.cache_data
-def buat_prompt_sistem():
-    daftar = "\n".join(f"- {a} ({k}, saldo normal {s})" for a, (k, s) in ak.AKUN.items())
+def buat_prompt_sistem(cjs):
+    daftar = "\n".join(
+        f"- {a['kode']} {a['nama']} ({a['kategori']}, saldo normal {a['normal']})"
+        for a in ak.urutkan_coa(json.loads(cjs))
+    )
     return PROMPT_TEMPLATE.replace("{{DAFTAR_AKUN}}", daftar)
 
 
 @st.cache_data
-def daftar_akun():
-    return ak.daftar_akun_df()
+def tabel_coa(cjs):
+    return ak.daftar_akun_df(json.loads(cjs))
 
 
 @st.cache_data
@@ -208,23 +235,24 @@ def muat_contoh():
     return CONTOH_BAWAAN
 
 
-def _js(jurnal):
-    return json.dumps(jurnal, sort_keys=True, default=str)
+@st.cache_data(show_spinner=False)
+def hitung_neraca(js, cjs):
+    return ak.neraca_saldo(json.loads(js), _peta(cjs))
 
 
 @st.cache_data(show_spinner=False)
-def hitung_neraca(js):
-    return ak.neraca_saldo(json.loads(js))
+def hitung_laporan(js, cjs):
+    return ak.laporan_keuangan(json.loads(js), _peta(cjs))
 
 
 @st.cache_data(show_spinner=False)
-def hitung_laporan(js):
-    return ak.laporan_keuangan(json.loads(js))
+def hitung_pemeriksaan(js, cjs):
+    return ak.pemeriksaan_keseimbangan(json.loads(js), _peta(cjs))
 
 
 @st.cache_data(show_spinner=False)
-def buat_excel(js):
-    return ak.ke_excel(json.loads(js))
+def buat_excel(js, cjs):
+    return ak.ke_excel(json.loads(js), _peta(cjs))
 
 
 # ---------------------------------------------------------------------------
@@ -240,7 +268,7 @@ def tanggal_aman(nilai, default):
         return default
 
 
-def jalankan_agent(teks, tanggal_default, maks_ulang=2):
+def jalankan_agent(teks, tanggal_default, cjs, maks_ulang=2):
     """
     Return: (hasil, log)
         hasil["status"] = "ok"    -> hasil["transaksi"] berisi draf jurnal valid
@@ -248,9 +276,10 @@ def jalankan_agent(teks, tanggal_default, maks_ulang=2):
                         = "gagal" -> hasil["pesan"] berisi penyebab
     """
     client = get_client()
+    peta = _peta(cjs)
     log = []
     pesan = [
-        {"role": "system", "content": buat_prompt_sistem()},
+        {"role": "system", "content": buat_prompt_sistem(cjs)},
         {"role": "user", "content": teks},
     ]
 
@@ -274,7 +303,7 @@ def jalankan_agent(teks, tanggal_default, maks_ulang=2):
 
             hasil = []
             for no, t in enumerate(data.get("transaksi") or [], start=1):
-                bersih, error = ak.periksa_transaksi(t)
+                bersih, error = ak.periksa_transaksi(t, peta)
                 if error:
                     masalah += [f"Transaksi {no}: {e}" for e in error]
                 else:
@@ -298,7 +327,7 @@ def jalankan_agent(teks, tanggal_default, maks_ulang=2):
     return {"status": "gagal", "pesan": "AI belum berhasil menyusun jurnal yang valid. Coba perjelas kalimatnya."}, log
 
 
-def buat_komentar(jurnal):
+def buat_komentar(U):
     """AI menulis komentar atas angka yang SUDAH dihitung Python."""
     respons = get_client().chat.completions.create(
         model=MODEL,
@@ -313,7 +342,7 @@ def buat_komentar(jurnal):
                     "bahwa laporan ini hanya berdasarkan transaksi yang diinput."
                 ),
             },
-            {"role": "user", "content": ak.ringkasan_untuk_ai(jurnal)},
+            {"role": "user", "content": ak.ringkasan_untuk_ai(U["jurnal"], ak.coa_ke_peta(U["coa"]))},
         ],
         temperature=0.3,
     )
@@ -337,7 +366,7 @@ def init_state():
         st.session_state.users = {"demo": buat_akun("Pengguna Demo", "demo123")}
     awal = {
         "user": None,            # {"username","nama","tamu"} saat sudah masuk
-        "data": {},              # {username: {"jurnal": [...], "komentar": ""}}
+        "data": {},              # {username: data pengguna, lihat data_baru()}
         "menu": M_DASHBOARD,
         "draf": [],
         "draf_versi": 0,
@@ -347,17 +376,48 @@ def init_state():
         "log": [],
         "pesan_sukses": "",
         "teks_input": "",
+        "tgl_input": date.today(),
+        "hapus_menunggu": None,
+        "upload_n": 0,
     }
     for k, v in awal.items():
         if k not in st.session_state:
             st.session_state[k] = v
+
+    # Supaya isi kotak input tidak hilang saat pindah menu: Streamlit membuang state widget
+    # yang tidak ditampilkan; menyalin ulang nilainya setiap run mencegah pembersihan itu.
+    for k in ("teks_input", "tgl_input"):
+        st.session_state[k] = st.session_state[k]
+
     if st.session_state.pop("kosongkan_input", False):
         st.session_state.teks_input = ""
 
 
+def data_baru():
+    return {"jurnal": [], "coa": ak.coa_default(), "komentar": "", "versi": 0, "versi_cadangan": 0}
+
+
 def data_user():
     u = st.session_state.user["username"]
-    return st.session_state.data.setdefault(u, {"jurnal": [], "komentar": ""})
+    if u not in st.session_state.data:
+        st.session_state.data[u] = data_baru()
+    return st.session_state.data[u]
+
+
+def ubah_data(U):
+    """Tandai data berubah (dipakai penanda cadangan & kunci widget); komentar AI jadi usang."""
+    U["versi"] += 1
+    U["komentar"] = ""
+
+
+def snap(U):
+    """(JSON jurnal, JSON daftar akun) sebagai kunci cache."""
+    return _js(U["jurnal"]), _js(U["coa"])
+
+
+def tandai_cadangan():
+    U = data_user()
+    U["versi_cadangan"] = U["versi"]
 
 
 def pindah(menu):
@@ -383,6 +443,7 @@ def keluar():
     st.session_state.log = []
     st.session_state.pesan_sukses = ""
     st.session_state.teks_input = ""
+    st.session_state.hapus_menunggu = None
 
 
 def isi_contoh():
@@ -444,14 +505,14 @@ def halaman_masuk():
 
         st.caption(
             "Akun bersifat lokal untuk sesi ini (demo). Data hilang saat halaman dimuat ulang, "
-            "jadi unduh Excel sebelum menutup aplikasi."
+            "jadi unduh cadangan di menu Cadangan & Ekspor sebelum menutup aplikasi."
         )
 
 
 # ---------------------------------------------------------------------------
 # SIDEBAR
 # ---------------------------------------------------------------------------
-def sidebar():
+def sidebar(U):
     u = st.session_state.user
     with st.sidebar:
         st.markdown(
@@ -473,10 +534,22 @@ def sidebar():
                 on_click=pindah,
                 args=(m,),
             )
+
+        # Status draf & cadangan
+        if st.session_state.draf:
+            st.caption(f"📝 {len(st.session_state.draf)} draf jurnal menunggu persetujuan (menu Input Transaksi).")
+        elif st.session_state.pertanyaan:
+            st.caption("🤔 Agent menunggu jawabanmu (menu Input Transaksi).")
+        if U["jurnal"]:
+            if U["versi"] != U["versi_cadangan"]:
+                st.caption("⚠️ Ada perubahan yang belum dicadangkan.")
+            else:
+                st.caption("✅ Data sudah dicadangkan.")
+
         st.divider()
         st.caption(f"Model AI: `{MODEL}`")
         with st.expander("📚 Daftar akun"):
-            st.dataframe(daftar_akun(), hide_index=True)
+            st.dataframe(tabel_coa(_js(U["coa"])), hide_index=True)
         st.button("🚪 Keluar / ganti akun", on_click=keluar)
 
 
@@ -519,6 +592,30 @@ def grafik_aset(lap):
     return fig
 
 
+def daftar_cek(cek):
+    """Hasil pemeriksaan -> list (level, teks) siap ditampilkan."""
+    item = []
+    if cek["transaksi_tidak_seimbang"]:
+        nomor = ", ".join(str(n) for n in cek["transaksi_tidak_seimbang"])
+        item.append(("bad", f"Transaksi tidak seimbang: no. {nomor}. Edit transaksi tersebut di Jurnal Umum."))
+    else:
+        item.append(("ok", "Setiap transaksi seimbang (debit = kredit)."))
+    if cek["total_debit"] == cek["total_kredit"]:
+        item.append(("ok", f"Neraca saldo seimbang: total debit {ak.rp(cek['total_debit'])} = total kredit {ak.rp(cek['total_kredit'])}."))
+    else:
+        item.append(("bad", f"Neraca saldo tidak seimbang: debit {ak.rp(cek['total_debit'])} ≠ kredit {ak.rp(cek['total_kredit'])}."))
+    if cek["persamaan_seimbang"]:
+        item.append(("ok", "Persamaan akuntansi seimbang: Aset = Liabilitas + Ekuitas."))
+    else:
+        item.append(("bad", f"Persamaan akuntansi tidak seimbang (selisih {ak.rp(abs(cek['selisih_persamaan']))}). Periksa kategori dan saldo normal akun."))
+    for r in cek["indikator"]:
+        if r["perhatian"]:
+            item.append(("warn", f"{r['akun']} ({ak.rp(r['saldo'])}): {r['catatan']}"))
+    for teks in cek["info"]:
+        item.append(("info", teks))
+    return item
+
+
 # ---------------------------------------------------------------------------
 # HALAMAN 1: DASHBOARD
 # ---------------------------------------------------------------------------
@@ -532,12 +629,13 @@ def halaman_dashboard(U):
     )
 
     if not jurnal:
-        kosong("Tulis transaksi dengan kalimat biasa, lalu AI menyusun jurnalnya.")
+        kosong("Tulis transaksi dengan kalimat biasa, lalu AI menyusun jurnalnya. Punya file cadangan? Muat di menu Cadangan & Ekspor.")
         return
 
-    js = _js(jurnal)
-    _, total_d, total_k, seimbang = hitung_neraca(js)
-    lap = hitung_laporan(js)
+    js, cjs = snap(U)
+    _, total_d, total_k, seimbang = hitung_neraca(js, cjs)
+    lap = hitung_laporan(js, cjs)
+    cek = hitung_pemeriksaan(js, cjs)
 
     m1, m2, m3 = st.columns(3)
     m1.metric("Jumlah transaksi", len(jurnal))
@@ -554,6 +652,16 @@ def halaman_dashboard(U):
     b2.button("📒 Lihat jurnal", on_click=pindah, args=(M_JURNAL,), key="d_jurnal")
     b3.button("📑 Buka laporan", on_click=pindah, args=(M_LAP,), key="d_lap")
 
+    # Kesehatan pembukuan (ringkas)
+    masalah = [(lv, tx) for lv, tx in daftar_cek(cek) if lv in ("bad", "warn")]
+    st.markdown("**Kesehatan pembukuan**")
+    if masalah:
+        for lv, tx in masalah[:4]:
+            kartu_cek(lv, tx)
+        st.button("🩺 Lihat pemeriksaan lengkap", on_click=pindah, args=(M_NS,), key="d_cek")
+    else:
+        kartu_cek("ok", "Pembukuan sehat: semua pemeriksaan keseimbangan lolos dan tidak ada saldo akun yang janggal.")
+
     kiri, kanan = st.columns([1.2, 1])
     with kiri:
         st.markdown("**Aktivitas terakhir**")
@@ -569,11 +677,11 @@ def halaman_dashboard(U):
 # ---------------------------------------------------------------------------
 # HALAMAN 2: INPUT TRANSAKSI
 # ---------------------------------------------------------------------------
-def proses_teks(teks, tanggal_default):
+def proses_teks(teks, tanggal_default, U):
     """Panggil agent lalu simpan hasilnya di state. Return status."""
     with st.spinner("🤖 AI sedang menyusun jurnal..."):
         try:
-            hasil, log = jalankan_agent(teks, tanggal_default)
+            hasil, log = jalankan_agent(teks, tanggal_default, _js(U["coa"]))
         except Exception as e:
             st.error(f"Gagal menghubungi AI: {e}")
             return "gagal"
@@ -596,8 +704,59 @@ def proses_teks(teks, tanggal_default):
     return hasil["status"]
 
 
+def df_dari_baris(baris):
+    df = pd.DataFrame(
+        [{"Akun": b.get("akun"), "Posisi": b.get("posisi"), "Nominal": b.get("nominal")} for b in baris],
+        columns=["Akun", "Posisi", "Nominal"],
+    )
+    df["Nominal"] = pd.to_numeric(df["Nominal"], errors="coerce")
+    return df
+
+
+def baris_dari_df(df):
+    """DataFrame editor -> list baris (nilai kosong jadi None; baris yang benar-benar kosong dibuang)."""
+    hasil = []
+    for _, r in df.iterrows():
+        akun = None if pd.isna(r["Akun"]) else r["Akun"]
+        posisi = None if pd.isna(r["Posisi"]) else r["Posisi"]
+        nominal = None
+        if not pd.isna(r["Nominal"]):
+            nominal = int(r["Nominal"]) if float(r["Nominal"]).is_integer() else float(r["Nominal"])
+        if akun is None and posisi is None and nominal is None:
+            continue
+        hasil.append({"akun": akun, "posisi": posisi, "nominal": nominal})
+    return hasil
+
+
+def baris_siap_simpan(df):
+    """Hanya baris yang akun dan nominalnya terisi (sama seperti perilaku sebelumnya)."""
+    return [
+        {"akun": b["akun"], "posisi": b["posisi"] or "", "nominal": b["nominal"]}
+        for b in baris_dari_df(df)
+        if b["akun"] is not None and b["nominal"] is not None
+    ]
+
+
+def konfigurasi_editor(peta):
+    return {
+        "Akun": st.column_config.SelectboxColumn("Akun", options=list(peta.keys()), required=True),
+        "Posisi": st.column_config.SelectboxColumn("Posisi", options=["debit", "kredit"], required=True),
+        "Nominal": st.column_config.NumberColumn("Nominal (Rp)", min_value=0, step=1000, format="%d"),
+    }
+
+
+def indikator_seimbang(df_edit):
+    d = df_edit.loc[df_edit["Posisi"] == "debit", "Nominal"].sum()
+    k = df_edit.loc[df_edit["Posisi"] == "kredit", "Nominal"].sum()
+    if d == k and d > 0:
+        st.success(f"✅ Seimbang: debit {ak.rp(d)} = kredit {ak.rp(k)}")
+    else:
+        st.error(f"❌ Belum seimbang: debit {ak.rp(d)} ≠ kredit {ak.rp(k)}")
+
+
 def halaman_input(U):
     judul("✍️", "Input transaksi", "Tulis transaksi dengan kalimat biasa. AI menyusun draf, Python memeriksa debit = kredit.")
+    peta = ak.coa_ke_peta(U["coa"])
 
     ada_kunci = get_client() is not None
     if not ada_kunci:
@@ -605,7 +764,7 @@ def halaman_input(U):
 
     kiri, kanan = st.columns([3, 1])
     with kanan:
-        tanggal_default = st.date_input("Tanggal (jika tidak disebut di kalimat)", value=date.today())
+        st.date_input("Tanggal (jika tidak disebut di kalimat)", key="tgl_input")
         st.button("📋 Isi contoh transaksi", on_click=isi_contoh)
     with kiri:
         teks = st.text_area(
@@ -620,7 +779,7 @@ def halaman_input(U):
         if not teks.strip():
             st.warning("Ketik dulu transaksinya.")
         else:
-            proses_teks(teks.strip(), tanggal_default.isoformat())
+            proses_teks(teks.strip(), st.session_state.tgl_input.isoformat(), U)
 
     # --- Agent bertanya balik (klarifikasi)
     if st.session_state.pertanyaan:
@@ -633,59 +792,53 @@ def halaman_input(U):
                 f"{st.session_state.input_terakhir}\n\n"
                 f"(Pertanyaan agent: {st.session_state.pertanyaan}\nJawaban pengguna: {jawaban.strip()})"
             )
-            status = proses_teks(gabungan, st.session_state.tanggal_terakhir)
+            status = proses_teks(gabungan, st.session_state.tanggal_terakhir, U)
             if status != "gagal":
                 st.rerun()
 
-    # --- Tinjau draf (human-in-the-loop)
+    # --- Tinjau draf (human-in-the-loop). Edit disalin balik ke st.session_state.draf di
+    #     setiap run, dan editor dipasang ulang dari salinan itu setelah pindah menu.
     if st.session_state.draf:
         st.subheader("📝 Tinjau draf jurnal")
-        st.caption("Periksa akun dan nominalnya. Kamu boleh mengedit sebelum menyimpan.")
+        st.caption("Periksa akun dan nominalnya. Perubahanmu tetap tersimpan walau kamu pindah menu.")
 
         hasil_edit = []
         for i, t in enumerate(st.session_state.draf):
             kunci = f"{st.session_state.draf_versi}_{i}"
+            k_ket, k_tgl, k_ed, k_beku = f"ket_{kunci}", f"tgl_{kunci}", f"edit_{kunci}", f"beku_{kunci}"
+            if k_beku not in st.session_state or k_ket not in st.session_state:
+                # editor baru dipasang (draf baru atau kembali dari menu lain): mulai dari draf terakhir
+                st.session_state[k_beku] = {
+                    "ket": t["keterangan"],
+                    "tgl": date.fromisoformat(t["tanggal"]),
+                    "df": df_dari_baris(t["baris"]),
+                }
+            beku = st.session_state[k_beku]
             with st.container(border=True):
                 c1, c2 = st.columns([3, 1])
-                ket = c1.text_input("Keterangan", value=t["keterangan"], key=f"ket_{kunci}")
-                tgl = c2.date_input("Tanggal", value=date.fromisoformat(t["tanggal"]), key=f"tgl_{kunci}")
-                df_awal = pd.DataFrame(
-                    [{"Akun": b["akun"], "Posisi": b["posisi"], "Nominal": b["nominal"]} for b in t["baris"]]
-                )
+                ket = c1.text_input("Keterangan", value=beku["ket"], key=k_ket)
+                tgl = c2.date_input("Tanggal", value=beku["tgl"], key=k_tgl)
                 df_edit = st.data_editor(
-                    df_awal,
-                    key=f"edit_{kunci}",
+                    beku["df"],
+                    key=k_ed,
                     num_rows="dynamic",
                     hide_index=True,
-                    column_config={
-                        "Akun": st.column_config.SelectboxColumn("Akun", options=list(ak.AKUN.keys()), required=True),
-                        "Posisi": st.column_config.SelectboxColumn("Posisi", options=["debit", "kredit"], required=True),
-                        "Nominal": st.column_config.NumberColumn("Nominal (Rp)", min_value=0, step=1000, format="%d"),
-                    },
+                    column_config=konfigurasi_editor(peta),
                 )
-                d = df_edit.loc[df_edit["Posisi"] == "debit", "Nominal"].sum()
-                k = df_edit.loc[df_edit["Posisi"] == "kredit", "Nominal"].sum()
-                if d == k and d > 0:
-                    st.success(f"✅ Seimbang: debit {ak.rp(d)} = kredit {ak.rp(k)}")
-                else:
-                    st.error(f"❌ Belum seimbang: debit {ak.rp(d)} ≠ kredit {ak.rp(k)}")
+                indikator_seimbang(df_edit)
+            st.session_state.draf[i] = {
+                "keterangan": ket,
+                "tanggal": tgl.isoformat(),
+                "baris": baris_dari_df(df_edit),
+            }
             hasil_edit.append((ket, tgl, df_edit))
 
         b1, b2, _ = st.columns([1.2, 1, 3])
         if b1.button("✅ Setuju & simpan", type="primary"):
             baru, semua_error = [], []
             for no, (ket, tgl, df_edit) in enumerate(hasil_edit, start=1):
-                baris = []
-                for _, r in df_edit.iterrows():
-                    if pd.isna(r["Akun"]) or pd.isna(r["Nominal"]):
-                        continue
-                    baris.append({
-                        "akun": r["Akun"],
-                        "posisi": r["Posisi"] if pd.notna(r["Posisi"]) else "",
-                        "nominal": r["Nominal"],
-                    })
                 bersih, error = ak.periksa_transaksi(
-                    {"tanggal": tgl.isoformat(), "keterangan": ket, "baris": baris}
+                    {"tanggal": tgl.isoformat(), "keterangan": ket, "baris": baris_siap_simpan(df_edit)}, peta
                 )
                 if error:
                     semua_error += [f"Transaksi {no}: {e}" for e in error]
@@ -698,10 +851,10 @@ def halaman_input(U):
                 for bersih in baru:
                     bersih["no"] = len(U["jurnal"]) + 1
                     U["jurnal"].append(bersih)
+                ubah_data(U)
                 st.session_state.draf = []
                 st.session_state.input_terakhir = ""
                 st.session_state.kosongkan_input = True
-                U["komentar"] = ""
                 st.session_state.pesan_sukses = f"✅ {len(baru)} transaksi disimpan ke Jurnal Umum."
                 st.rerun()
 
@@ -716,14 +869,78 @@ def halaman_input(U):
 
 
 # ---------------------------------------------------------------------------
-# HALAMAN 3: JURNAL UMUM
+# HALAMAN 3: JURNAL UMUM (filter, cari, edit, hapus)
 # ---------------------------------------------------------------------------
+def bagian_edit_transaksi(U, tersaring, peta):
+    jurnal = U["jurnal"]
+    st.markdown("### ✏️ Edit atau hapus transaksi")
+    if not tersaring:
+        st.caption("Tidak ada transaksi pada hasil filter untuk diedit.")
+        return
+
+    ids = {id(t) for t in tersaring}
+    opsi = {
+        f'No. {t["no"]} · {t["tanggal"]} · {t["keterangan"]}': i
+        for i, t in enumerate(jurnal) if id(t) in ids
+    }
+    pilih = st.selectbox("Pilih transaksi", list(opsi.keys()))
+    i = opsi[pilih]
+    t = jurnal[i]
+    kunci = f'{U["versi"]}_{t["no"]}'
+
+    with st.container(border=True):
+        c1, c2 = st.columns([3, 1])
+        ket = c1.text_input("Keterangan", value=t["keterangan"], key=f"eket_{kunci}")
+        tgl = c2.date_input("Tanggal", value=date.fromisoformat(t["tanggal"]), key=f"etgl_{kunci}")
+        df_edit = st.data_editor(
+            df_dari_baris([{"akun": b["akun"], "posisi": b["posisi"], "nominal": b["nominal"]} for b in t["baris"]]),
+            key=f"eed_{kunci}",
+            num_rows="dynamic",
+            hide_index=True,
+            column_config=konfigurasi_editor(peta),
+        )
+        indikator_seimbang(df_edit)
+
+        b1, b2, _ = st.columns([1.2, 1.2, 3])
+        if b1.button("💾 Simpan perubahan", type="primary", key=f"simpan_{kunci}"):
+            bersih, error = ak.periksa_transaksi(
+                {"tanggal": tgl.isoformat(), "keterangan": ket, "baris": baris_siap_simpan(df_edit)}, peta
+            )
+            if error:
+                st.error("Belum bisa disimpan:\n\n" + "\n".join(f"- {e}" for e in error))
+            else:
+                bersih["no"] = t["no"]
+                U["jurnal"][i] = bersih
+                ubah_data(U)
+                st.session_state.pesan_sukses = (
+                    f"✅ Transaksi no. {t['no']} diperbarui. Buku besar, neraca saldo, dan laporan ikut terbarui."
+                )
+                st.rerun()
+        if b2.button("🗑️ Hapus transaksi", key=f"hapus_{kunci}"):
+            st.session_state.hapus_menunggu = t["no"]
+
+    if st.session_state.hapus_menunggu == t["no"]:
+        st.warning(f"Hapus transaksi no. {t['no']} ({t['keterangan']})? Nomor transaksi sesudahnya akan bergeser.")
+        y, n, _ = st.columns([1, 1, 4])
+        if y.button("Ya, hapus", type="primary", key=f"ya_{kunci}"):
+            U["jurnal"].pop(i)
+            ak.nomori_ulang(U["jurnal"])
+            ubah_data(U)
+            st.session_state.hapus_menunggu = None
+            st.session_state.pesan_sukses = "🗑️ Transaksi dihapus. Buku besar, neraca saldo, dan laporan ikut terbarui."
+            st.rerun()
+        if n.button("Batal", key=f"batal_{kunci}"):
+            st.session_state.hapus_menunggu = None
+            st.rerun()
+
+
 def halaman_jurnal(U):
-    judul("📒", "Jurnal umum", "Semua transaksi yang sudah disetujui, urut sesuai input.")
+    judul("📒", "Jurnal umum", "Semua transaksi yang sudah disetujui. Cari, edit, atau hapus di sini.")
     jurnal = U["jurnal"]
     if not jurnal:
         kosong("Jurnal umum terisi setelah Anda menyimpan transaksi.")
         return
+    peta = ak.coa_ke_peta(U["coa"])
 
     tanggal = [date.fromisoformat(t["tanggal"]) for t in jurnal]
     tmin, tmax = min(tanggal), max(tanggal)
@@ -731,7 +948,7 @@ def halaman_jurnal(U):
     with st.container(border=True):
         f1, f2, f3 = st.columns([1.3, 1.5, 1.2])
         rentang = f1.date_input("Rentang tanggal", value=(tmin, tmax), min_value=tmin, max_value=tmax)
-        akun_pilih = f2.multiselect("Akun", ak.akun_terpakai(jurnal), placeholder="Semua akun")
+        akun_pilih = f2.multiselect("Akun", ak.akun_terpakai(jurnal, peta), placeholder="Semua akun")
         kata = f3.text_input("Cari keterangan")
 
     if isinstance(rentang, (tuple, list)):
@@ -756,15 +973,18 @@ def halaman_jurnal(U):
     else:
         st.info("Tidak ada transaksi yang cocok dengan filter.")
 
-    with st.expander("⚙️ Kelola jurnal"):
-        c1, c2, _ = st.columns([1.3, 1.2, 3])
+    bagian_edit_transaksi(U, tersaring, peta)
+
+    with st.expander("⚙️ Hapus banyak sekaligus"):
+        c1, c2 = st.columns([1.3, 3])
         if c1.button("↩️ Hapus transaksi terakhir"):
             U["jurnal"].pop()
-            U["komentar"] = ""
+            ubah_data(U)
             st.rerun()
-        if c2.button("🗑️ Hapus semua jurnal"):
+        yakin = st.checkbox("Saya yakin ingin menghapus SEMUA jurnal")
+        if st.button("🗑️ Hapus semua jurnal", disabled=not yakin):
             U["jurnal"].clear()
-            U["komentar"] = ""
+            ubah_data(U)
             st.rerun()
 
 
@@ -777,10 +997,14 @@ def halaman_buku_besar(U):
     if not jurnal:
         kosong("Buku besar terbentuk otomatis setelah ada transaksi.")
         return
+    peta = ak.coa_ke_peta(U["coa"])
+    kode = {a["nama"]: a["kode"] for a in U["coa"]}
 
-    akun_pilih = st.selectbox("Pilih akun", ak.akun_terpakai(jurnal))
-    df_bb, saldo_akhir = ak.buku_besar(jurnal, akun_pilih)
-    kategori, normal = ak.AKUN[akun_pilih]
+    akun_pilih = st.selectbox(
+        "Pilih akun", ak.akun_terpakai(jurnal, peta), format_func=lambda a: f"{kode.get(a, '')} · {a}"
+    )
+    df_bb, saldo_akhir = ak.buku_besar(jurnal, akun_pilih, peta)
+    kategori, normal = peta[akun_pilih]
 
     c1, c2, c3 = st.columns(3)
     c1.metric(f"Saldo akhir {akun_pilih}", ak.rp(saldo_akhir))
@@ -795,23 +1019,24 @@ def halaman_buku_besar(U):
 
     with st.expander("Saldo semua akun"):
         ringkas = pd.DataFrame([
-            {"Akun": a, "Kategori": ak.AKUN[a][0], "Saldo (Rp)": ak.fmt_angka(s)}
-            for a, s in ak.saldo_semua_akun(jurnal).items()
+            {"Kode": kode.get(a, ""), "Akun": a, "Kategori": peta[a][0], "Saldo (Rp)": ak.fmt_angka(s)}
+            for a, s in ak.saldo_semua_akun(jurnal, peta).items()
         ])
         st.dataframe(ringkas, hide_index=True)
 
 
 # ---------------------------------------------------------------------------
-# HALAMAN 5: NERACA SALDO
+# HALAMAN 5: NERACA SALDO + PEMERIKSAAN KESEIMBANGAN
 # ---------------------------------------------------------------------------
 def halaman_neraca(U):
-    judul("⚖️", "Neraca saldo", "Saldo akhir tiap akun di sisi debit atau kredit.")
+    judul("⚖️", "Neraca saldo", "Saldo akhir tiap akun, lengkap dengan pemeriksaan keseimbangan.")
     jurnal = U["jurnal"]
     if not jurnal:
         kosong("Neraca saldo terbentuk otomatis setelah ada transaksi.")
         return
 
-    ns, total_d, total_k, seimbang = hitung_neraca(_js(jurnal))
+    js, cjs = snap(U)
+    ns, total_d, total_k, seimbang = hitung_neraca(js, cjs)
     if seimbang:
         st.success(f"✅ Seimbang: total debit {ak.rp(total_d)} = total kredit {ak.rp(total_k)}")
     else:
@@ -826,6 +1051,30 @@ def halaman_neraca(U):
         hide_index=True,
     )
 
+    st.markdown("### 🩺 Pemeriksaan keseimbangan")
+    cek = hitung_pemeriksaan(js, cjs)
+    x1, x2, x3 = st.columns(3)
+    x1.metric("Total debit", ak.rp(cek["total_debit"]))
+    x2.metric("Total kredit", ak.rp(cek["total_kredit"]))
+    x3.metric("Selisih", ak.rp(abs(cek["total_debit"] - cek["total_kredit"])))
+
+    for level, teks in daftar_cek(cek):
+        kartu_cek(level, teks)
+
+    st.markdown("**Indikator akun**")
+    tabel = pd.DataFrame([
+        {
+            "Akun": r["akun"],
+            "Kategori": r["kategori"],
+            "Saldo normal": r["normal"].capitalize(),
+            "Saldo (Rp)": ak.fmt_angka(r["saldo"]),
+            "Status": "⚠️ Perlu perhatian" if r["perhatian"] else "✅ Wajar",
+            "Catatan": r["catatan"],
+        }
+        for r in cek["indikator"]
+    ])
+    st.dataframe(tabel, hide_index=True)
+
 
 # ---------------------------------------------------------------------------
 # HALAMAN 6: LAPORAN KEUANGAN
@@ -837,7 +1086,8 @@ def halaman_laporan(U):
         kosong("Laporan keuangan terbentuk otomatis setelah ada transaksi.")
         return
 
-    lap = hitung_laporan(_js(jurnal))
+    js, cjs = snap(U)
+    lap = hitung_laporan(js, cjs)
 
     x1, x2, x3 = st.columns(3)
     x1.metric("Total pendapatan", ak.rp(lap["total_pendapatan"]))
@@ -855,7 +1105,7 @@ def halaman_laporan(U):
     if lap["seimbang"]:
         st.success("✅ Persamaan akuntansi seimbang: Aset = Liabilitas + Ekuitas")
     else:
-        st.error("❌ Persamaan akuntansi tidak seimbang. Periksa jurnal.")
+        st.error("❌ Persamaan akuntansi tidak seimbang. Periksa jurnal dan daftar akun.")
 
     g1, g2 = st.columns(2)
     g1.plotly_chart(grafik_laba_rugi(lap))
@@ -867,7 +1117,7 @@ def halaman_laporan(U):
     if st.button("Buat komentar AI", disabled=get_client() is None):
         with st.spinner("AI sedang menulis komentar..."):
             try:
-                U["komentar"] = buat_komentar(jurnal)
+                U["komentar"] = buat_komentar(U)
             except Exception as e:
                 st.error(f"Gagal menghubungi AI: {e}")
     if U["komentar"]:
@@ -876,24 +1126,232 @@ def halaman_laporan(U):
 
 
 # ---------------------------------------------------------------------------
-# HALAMAN 7: EKSPOR
+# HALAMAN 7: KELOLA AKUN (COA)
 # ---------------------------------------------------------------------------
-def halaman_ekspor(U):
-    judul("📥", "Ekspor Excel", "Unduh seluruh hasil pembukuan dalam satu file.")
-    jurnal = U["jurnal"]
-    if not jurnal:
-        kosong("Belum ada data untuk diunduh.")
+def halaman_akun(U):
+    judul("🗂️", "Kelola daftar akun", "Tambah atau sesuaikan akun. Daftar ini dipakai AI dan jurnal agar pencatatan konsisten.")
+    jurnal, daftar = U["jurnal"], U["coa"]
+    pakai = ak.jumlah_pemakaian(jurnal)
+
+    a1, a2, a3 = st.columns(3)
+    a1.metric("Jumlah akun", len(daftar))
+    a2.metric("Akun terpakai di jurnal", len(pakai))
+    a3.metric("Akun inti (terkunci)", len(ak.AKUN_INTI))
+
+    tabel = pd.DataFrame([
+        {
+            "Kode": a["kode"],
+            "Akun": a["nama"],
+            "Kategori": a["kategori"],
+            "Saldo normal": a["normal"].capitalize(),
+            "Status": "🔒 Akun inti" if a["nama"] in ak.AKUN_INTI
+            else (f"Dipakai di {pakai[a['nama']]} transaksi" if a["nama"] in pakai else "Belum dipakai"),
+        }
+        for a in ak.urutkan_coa(daftar)
+    ])
+    st.dataframe(tabel, hide_index=True)
+    st.caption(
+        "Akun inti dirujuk oleh aturan AI dan laporan, jadi hanya kodenya yang bisa diubah. "
+        "Saran kode: Aset 1xx · Liabilitas 2xx · Ekuitas 3xx · Pendapatan 4xx · Beban 5xx."
+    )
+
+    tab_tambah, tab_ubah, tab_hapus = st.tabs(["➕ Tambah akun", "✏️ Ubah akun", "🗑️ Hapus akun"])
+
+    with tab_tambah:
+        with st.form("form_tambah_akun", clear_on_submit=True):
+            c1, c2 = st.columns([1, 2])
+            kode = c1.text_input("Kode akun", placeholder="mis. 106")
+            nama = c2.text_input("Nama akun", placeholder="mis. Piutang Karyawan")
+            c3, c4 = st.columns(2)
+            kategori = c3.selectbox("Kategori", ak.URUTAN_KATEGORI)
+            normal = c4.selectbox("Saldo normal", ["debit", "kredit"])
+            kirim = st.form_submit_button("Tambah akun", type="primary")
+        st.caption(
+            "Aset & Beban biasanya bersaldo normal debit; Liabilitas, Ekuitas & Pendapatan biasanya kredit. "
+            "Pilih sisi berlawanan hanya untuk akun pengurang (mis. Akumulasi Penyusutan)."
+        )
+        if kirim:
+            error = ak.coa_tambah(daftar, kode, nama, kategori, normal)
+            if error:
+                st.error("\n\n".join(error))
+            else:
+                ubah_data(U)
+                catatan = ""
+                if normal != ak.NORMAL_KATEGORI[kategori]:
+                    catatan = " Akun ini diperlakukan sebagai akun pengurang di kategorinya."
+                st.session_state.pesan_sukses = f"✅ Akun '{nama.strip()}' ditambahkan.{catatan}"
+                st.rerun()
+
+    with tab_ubah:
+        urut = ak.urutkan_coa(daftar)
+        nama_pilih = st.selectbox("Pilih akun", [a["nama"] for a in urut], key="ubah_pilih")
+        akun = next(a for a in urut if a["nama"] == nama_pilih)
+        inti = nama_pilih in ak.AKUN_INTI
+        if inti:
+            st.info("Akun inti: hanya kode yang bisa diubah.")
+        kf = f"{nama_pilih}_{U['versi']}"
+        with st.form(f"form_ubah_{kf}"):
+            c1, c2 = st.columns([1, 2])
+            kode = c1.text_input("Kode akun", value=akun["kode"], key=f"uk_{kf}")
+            nama = c2.text_input("Nama akun", value=akun["nama"], disabled=inti, key=f"un_{kf}")
+            c3, c4 = st.columns(2)
+            kategori = c3.selectbox(
+                "Kategori", ak.URUTAN_KATEGORI, index=ak.URUTAN_KATEGORI.index(akun["kategori"]),
+                disabled=inti, key=f"ukat_{kf}",
+            )
+            normal = c4.selectbox(
+                "Saldo normal", ["debit", "kredit"], index=["debit", "kredit"].index(akun["normal"]),
+                disabled=inti, key=f"unor_{kf}",
+            )
+            kirim = st.form_submit_button("Simpan perubahan", type="primary")
+        if pakai.get(nama_pilih):
+            st.caption(f"Akun ini dipakai di {pakai[nama_pilih]} transaksi. Jika namanya diubah, jurnal ikut diperbarui.")
+        if kirim:
+            error = ak.coa_ubah(daftar, nama_pilih, kode, nama, kategori, normal, jurnal)
+            if error:
+                st.error("\n\n".join(error))
+            else:
+                ubah_data(U)
+                st.session_state.pesan_sukses = f"✅ Akun '{nama_pilih}' diperbarui. Laporan ikut terbarui."
+                st.rerun()
+
+    with tab_hapus:
+        kandidat = [a["nama"] for a in ak.urutkan_coa(daftar) if a["nama"] not in ak.AKUN_INTI and not pakai.get(a["nama"])]
+        if not kandidat:
+            st.info("Tidak ada akun yang bisa dihapus. Akun inti dan akun yang sudah dipakai di jurnal tidak bisa dihapus.")
+        else:
+            hapus = st.selectbox("Akun yang dihapus", kandidat, key="hapus_pilih")
+            if st.button("🗑️ Hapus akun"):
+                error = ak.coa_hapus(daftar, hapus, jurnal)
+                if error:
+                    st.error("\n\n".join(error))
+                else:
+                    ubah_data(U)
+                    st.session_state.pesan_sukses = f"🗑️ Akun '{hapus}' dihapus."
+                    st.rerun()
+        with st.expander("Kembalikan ke daftar akun bawaan"):
+            st.write("Daftar akun diganti dengan bawaan aplikasi. Hanya bisa jika semua akun di jurnal ada di daftar bawaan.")
+            yakin = st.checkbox("Saya yakin", key="yakin_reset_coa")
+            if st.button("↩️ Kembalikan daftar bawaan", disabled=not yakin):
+                error = ak.coa_kembalikan(daftar, jurnal)
+                if error:
+                    st.error("\n\n".join(error))
+                else:
+                    ubah_data(U)
+                    st.session_state.pesan_sukses = "↩️ Daftar akun dikembalikan ke bawaan."
+                    st.rerun()
+
+
+# ---------------------------------------------------------------------------
+# HALAMAN 8: CADANGAN & EKSPOR
+# ---------------------------------------------------------------------------
+def tampilkan_error(errors, batas=8):
+    st.error("File tidak bisa dimuat:")
+    for e in errors[:batas]:
+        st.write(f"- {e}")
+    if len(errors) > batas:
+        st.caption(f"…dan {len(errors) - batas} masalah lain.")
+
+
+def bagian_muat(U):
+    n = st.session_state.upload_n
+    berkas = st.file_uploader("Pilih file cadangan (.json atau .csv)", type=["json", "csv"], key=f"upload_{n}")
+    st.caption("JSON memuat jurnal + daftar akun. CSV memuat jurnal; akun baru ditambahkan otomatis bila kolom Kategori & Saldo Normal ada.")
+    if berkas is None:
+        return
+    if berkas.size > 5_000_000:
+        st.error("File terlalu besar (maksimal 5 MB).")
         return
 
-    st.write("File Excel berisi lima lembar: Jurnal Umum, Buku Besar, Neraca Saldo, Laba Rugi, dan Posisi Keuangan.")
-    st.download_button(
-        "📥 Unduh Excel",
-        data=buat_excel(_js(jurnal)),
-        file_name=f"akunpintar_{st.session_state.user['username']}.xlsx",
-        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        type="primary",
+    isi = berkas.getvalue()
+    try:
+        if berkas.name.lower().endswith(".json"):
+            data, errors = ak.muat_snapshot_json(isi.decode("utf-8-sig"))
+        else:
+            data, errors = ak.muat_snapshot_csv(isi, U["coa"])
+    except UnicodeDecodeError:
+        data, errors = None, ["Isi file bukan teks UTF-8 yang valid."]
+    if errors:
+        tampilkan_error(errors)
+        return
+
+    tgl = [t["tanggal"] for t in data["jurnal"]]
+    p1, p2, p3 = st.columns(3)
+    p1.metric("Transaksi", len(data["jurnal"]))
+    p2.metric("Akun", len(data["coa"]))
+    p3.metric("Rentang tanggal", f"{min(tgl)} → {max(tgl)}" if tgl else "-")
+    if data["dibuat"]:
+        st.caption(f"Cadangan dibuat {data['dibuat']}" + (f" oleh @{data['pengguna']}" if data["pengguna"] else "") + ".")
+    st.success("✅ File valid: semua akun dikenali dan setiap transaksi seimbang.")
+
+    yakin = True
+    if U["jurnal"]:
+        st.warning(f"Data saat ini ({len(U['jurnal'])} transaksi) akan DIGANTI oleh isi file ini.")
+        yakin = st.checkbox("Saya mengerti dan ingin mengganti data saat ini")
+    if st.button("📂 Muat data ini", type="primary", disabled=not yakin):
+        U["jurnal"][:] = data["jurnal"]
+        U["coa"][:] = data["coa"]
+        ubah_data(U)
+        U["komentar"] = data["komentar"]
+        U["versi_cadangan"] = U["versi"]
+        st.session_state.upload_n += 1
+        st.session_state.pesan_sukses = f"✅ {len(data['jurnal'])} transaksi berhasil dimuat dari cadangan."
+        st.rerun()
+
+
+def halaman_cadangan(U):
+    judul("💾", "Cadangan & ekspor", "Simpan data sesi agar bisa dimuat kembali setelah halaman dimuat ulang atau berpindah sesi.")
+    jurnal = U["jurnal"]
+    st.markdown(
+        '<div class="kartu"><h4>Mengapa perlu cadangan?</h4>'
+        "<p>Data tersimpan di memori sesi browser. Jika halaman di-refresh, sesi tertidur, atau kamu membuka "
+        "sesi baru, data hilang. Unduh cadangan JSON, lalu muat kembali di sini kapan saja.</p></div>",
+        unsafe_allow_html=True,
     )
-    st.caption("Data hanya tersimpan selama aplikasi dibuka. Unduh dulu sebelum menutup halaman.")
+
+    tab_unduh, tab_muat = st.tabs(["⬇️ Unduh", "⬆️ Muat cadangan"])
+
+    with tab_unduh:
+        if not jurnal:
+            st.info("Belum ada data untuk diunduh. Kamu tetap bisa memuat cadangan di tab sebelah.")
+        else:
+            js, cjs = snap(U)
+            stempel = datetime.now().strftime("%Y%m%d")
+            dasar = f"akunpintar_{st.session_state.user['username']}_{stempel}"
+
+            st.markdown("**Cadangan sesi (bisa dimuat kembali)**")
+            c1, c2 = st.columns(2)
+            snapshot = ak.snapshot_ke_json(
+                ak.buat_snapshot(jurnal, U["coa"], st.session_state.user["username"], U["komentar"])
+            )
+            c1.download_button(
+                "💾 Cadangan JSON (lengkap)",
+                data=snapshot.encode("utf-8"),
+                file_name=f"{dasar}.json",
+                mime="application/json",
+                type="primary",
+                on_click=tandai_cadangan,
+            )
+            c2.download_button(
+                "🧾 Cadangan CSV (jurnal)",
+                data=ak.jurnal_ke_csv(jurnal, U["coa"]),
+                file_name=f"{dasar}.csv",
+                mime="text/csv",
+                on_click=tandai_cadangan,
+            )
+            st.caption("JSON berisi jurnal, daftar akun, dan komentar AI. CSV berisi jurnal beserta kode/kategori akun yang dipakai.")
+
+            st.markdown("**Laporan Excel**")
+            st.download_button(
+                "📥 Unduh laporan Excel (.xlsx)",
+                data=buat_excel(js, cjs),
+                file_name=f"{dasar}.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            )
+            st.caption("Excel berisi Jurnal Umum, Buku Besar, Neraca Saldo, Laba Rugi, dan Posisi Keuangan. Untuk dibaca, bukan untuk dimuat kembali.")
+
+    with tab_muat:
+        bagian_muat(U)
 
 
 # ---------------------------------------------------------------------------
@@ -906,7 +1364,8 @@ HALAMAN = {
     M_BB: halaman_buku_besar,
     M_NS: halaman_neraca,
     M_LAP: halaman_laporan,
-    M_EKSPOR: halaman_ekspor,
+    M_AKUN: halaman_akun,
+    M_CADANGAN: halaman_cadangan,
 }
 
 pasang_css()
@@ -916,10 +1375,11 @@ if not st.session_state.user:
     halaman_masuk()
     st.stop()
 
-sidebar()
+U = data_user()
+sidebar(U)
 
 if st.session_state.pesan_sukses:
     st.success(st.session_state.pesan_sukses)
     st.session_state.pesan_sukses = ""
 
-HALAMAN[st.session_state.menu](data_user())
+HALAMAN[st.session_state.menu](U)
